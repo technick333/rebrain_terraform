@@ -1,0 +1,75 @@
+#cloud-config
+users:
+- name: dbarkanov
+  sudo: 'ALL=(ALL) NOPASSWD:ALL'
+  shell: /bin/bash
+  ssh_authorized_keys:
+  - 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCg9i7Dv65q+YIbxkkBqnNwxbrDF4Fj68OTbu3Qf+ky3JpMkzk9jegyagsB3Y/mspp1crdgebABU3Gf61rlEa7tPLAv1h5uZgY7CFIVlgt3YfXzoNVHL21/GpJRwVfm6pu7vVLFOVD7YRhRvZ4Jdz+dlBTgAPjJH1AnyYTyCjzqVLxAutmu097UkD3D8xGrNpjX3+3HKQNjyLfts/Df5wDjk2KJ6nT7FvHei0sU6dha+FvHopsaJawx7faYMnWaLTRhBPFaO64ahMlkXDA6CoE/WJzCXUkXUrcOuwPC3luGlae4uEP1QDBkORMsqYLOMPaDOra7Xo1iwhkx2NrQJ1abmwSbkdA/z9pTmYW0dw+ZhySoEr6oG8g9b62bNDvhUyIp33hfsnmATGQZBstSLvf+W26dV6zyhaErZ4JsnpwBTBdwegHktPEOrwAa27F1EQfIEOGzXbmz5qFqgM9Xov1JBuLhynfg87b1dsCl4LlUvZpFTBX/KGcYlshvIbtMUeU='
+- name: user01
+  sudo: 'ALL=(ALL) NOPASSWD:ALL'
+  shell: /bin/bash
+  ssh_authorized_keys:
+  - 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCg9i7Dv65q+YIbxkkBqnNwxbrDF4Fj68OTbu3Qf+ky3JpMkzk9jegyagsB3Y/mspp1crdgebABU3Gf61rlEa7tPLAv1h5uZgY7CFIVlgt3YfXzoNVHL21/GpJRwVfm6pu7vVLFOVD7YRhRvZ4Jdz+dlBTgAPjJH1AnyYTyCjzqVLxAutmu097UkD3D8xGrNpjX3+3HKQNjyLfts/Df5wDjk2KJ6nT7FvHei0sU6dha+FvHopsaJawx7faYMnWaLTRhBPFaO64ahMlkXDA6CoE/WJzCXUkXUrcOuwPC3luGlae4uEP1QDBkORMsqYLOMPaDOra7Xo1iwhkx2NrQJ1abmwSbkdA/z9pTmYW0dw+ZhySoEr6oG8g9b62bNDvhUyIp33hfsnmATGQZBstSLvf+W26dV6zyhaErZ4JsnpwBTBdwegHktPEOrwAa27F1EQfIEOGzXbmz5qFqgM9Xov1JBuLhynfg87b1dsCl4LlUvZpFTBX/KGcYlshvIbtMUeU='
+write_files:
+  - path: "/usr/local/etc/startup.sh"
+    permissions: "755"
+    content: |
+      #!/bin/bash
+
+      apt-get update
+      sudo apt-get install -y nginx-full php-fpm php-mysql
+      sudo systemctl enable nginx
+      
+      sudo rm /etc/nginx/sites-enabled/default
+      sudo ln -s /etc/nginx/sites-available/wordpress /etc/nginx/sites-enabled/wordpress
+
+      wget https://wordpress.org/latest.tar.gz
+      tar -xzf latest.tar.gz
+      mv wordpress/wp-config-sample.php wordpress/wp-config.php
+      sudo mv wordpress /var/www/wordpress
+      sudo chown -R www-data:www-data /var/www/wordpress
+
+      curl --silent https://api.wordpress.org/secret-key/1.1/salt/ >> /var/www/wordpress/wp-config.php
+      #config database connect
+
+      sed  -i 's/database_name_here/${db_config["database"]}/' /var/www/wordpress/wp-config.php
+      sed  -i 's/username_here/${db_config["user"]}/' /var/www/wordpress/wp-config.php
+      sed  -i 's/password_here/${db_config["password"]}/' /var/www/wordpress/wp-config.php
+      sed  -i 's/localhost/${fqdn}/' /var/www/wordpress/wp-config.php
+
+      sudo systemctl restart php8.1-fpm.service
+      sudo systemctl restart nginx             
+    defer: true
+  - path: "/etc/nginx/sites-available/wordpress"
+    permissions: "755"
+    content: |
+      server {
+        listen 80 default_server;
+
+        root /var/www/wordpress;
+        index index.php;
+
+        #server_name <DNS-имя_сервера>;
+
+        location / {
+          try_files $uri $uri/ =404;
+        }
+
+        error_page 404 /404.html;
+        error_page 500 502 503 504 /50x.html;
+        location = /50x.html {
+          root /usr/share/nginx/html;
+        }
+
+        location ~ \.php$ {
+          try_files $uri =404;
+          fastcgi_split_path_info ^(.+\.php)(/.+)$;
+          fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+          fastcgi_index index.php;
+          fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+          include fastcgi_params;
+        }
+      }
+    defer: true
+runcmd:
+  - ["/usr/local/etc/startup.sh"]
